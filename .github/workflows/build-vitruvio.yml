@@ -16,6 +16,7 @@ on:
 
 env:
   CONFIG: ${{github.ref == 'refs/heads/main' && '--build-config=Shipping' || '--build-config=Development'}}
+  LANE: '--build-lane=ce4ue'
 
 jobs:
   package-host:
@@ -25,9 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: git -C C:\dev\git\zrh-xr-devops\ pull -q
       - run: |
-          C:\dev\git\zrh-xr-devops\scripts\ue_build_action.py ${{github.workspace}} ${{github.ref_name}} vitruvio_host_package ${{env.CONFIG}}
+          C:\dev\git\zrh-xr-devops\scripts\ue_build_action.py ${{ github.workspace }} ${{ github.ref_name }} vitruvio_host_package ${{ env.CONFIG }} ${{ env.LANE }}
       - run: |
-          C:\dev\git\zrh-xr-devops\scripts\ue_run_action.py ${{github.workspace}} ${{github.ref_name}} vitruvio_host_package
+          C:\dev\git\zrh-xr-devops\scripts\ue_run_action.py ${{ github.workspace }} ${{ github.ref_name }} vitruvio_host_package
   
   build-plugin:
     runs-on: [self-hosted, zrh-unreal]
@@ -36,4 +37,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: git -C C:\dev\git\zrh-xr-devops\ pull -q
       - run: |
-          C:\dev\git\zrh-xr-devops\scripts\ue_build_action.py ${{github.workspace}} ${{github.ref_name}} vitruvio_plugin_build
+          C:\dev\git\zrh-xr-devops\scripts\ue_build_action.py ${{ github.workspace }} ${{ github.ref_name }} vitruvio_plugin_build ${{ env.LANE }}
