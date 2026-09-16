@@ -2,6 +2,8 @@ name: protecode-blackduck
 
 on:
   workflow_dispatch:
+#  schedule:
+#    - cron: "0 4 * * 1" # Mondays at 03:00 UTC
 
 jobs:
   build:
@@ -16,6 +18,9 @@ jobs:
     name: Upload dev build to protecode
     needs: build
     runs-on: [self-hosted, zrh-unreal]
+    concurrency:
+      group: protecode-upload-${{ vars.BLACKDUCK_GROUP_ID }}-${{ vars.BLACKDUCK_APPLICATION_NAME }}
+      cancel-in-progress: false
 
     env:
       BLACKDUCK_BASE_URL: ${{ vars.BLACKDUCK_BASE_URL }}
@@ -60,11 +65,41 @@ jobs:
             
           $fileName = $env:BLACKDUCK_APPLICATION_NAME
           $encodedFileName = [System.Uri]::EscapeDataString($fileName)
-          $uploadUrl = '{0}/api/upload/{1}' -f $env:BLACKDUCK_BASE_URL.TrimEnd('/'), $encodedFileName
+          $baseUrl = $env:BLACKDUCK_BASE_URL.TrimEnd('/')
+          $uploadUrl = '{0}/api/upload/{1}' -f $baseUrl, $encodedFileName
 
           $headers = @{
             Authorization = "Bearer $env:BLACKDUCK_API_KEY"
             Group = $env:BLACKDUCK_GROUP_ID
+          }
+
+          $encodedGroupId = [System.Uri]::EscapeDataString($env:BLACKDUCK_GROUP_ID)
+          $lookupUrl = '{0}/api/apps/{1}/?name={2}' -f $baseUrl, $encodedGroupId, $encodedFileName
+          $lookup = Invoke-RestMethod -Method Get -Uri $lookupUrl -Headers $headers -ErrorAction Stop
+
+          if ($lookup.meta.code -ne 200 -or $null -eq $lookup.count -or $null -eq $lookup.products) {
+            throw 'Application lookup returned an unexpected response; refusing to upload'
+          }
+
+          if ($lookup.count -gt 1 -or $lookup.next) {
+            throw "Multiple applications named '$fileName' exist in group $env:BLACKDUCK_GROUP_ID. Rename or remove duplicate entries before retrying."
+          }
+
+          $products = @($lookup.products)
+          if ($lookup.count -ne $products.Count) {
+            throw 'Application lookup returned an inconsistent count; refusing to upload'
+          }
+
+          if ($products.Count -eq 1) {
+            $product = $products[0]
+            if ($product.name -cne $fileName -or [string]$product.group_id -ne $env:BLACKDUCK_GROUP_ID -or [string]$product.product_id -notmatch '^[1-9][0-9]*$') {
+              throw 'Application lookup did not return the expected name, group, and product ID; refusing to replace'
+            }
+
+            $headers['Replace'] = [string]$product.product_id
+            Write-Host "Replacing product $($product.product_id): $fileName"
+          } else {
+            Write-Host "Creating application in group $env:BLACKDUCK_GROUP_ID`: $fileName"
           }
 
           $request = @{
@@ -73,10 +108,17 @@ jobs:
             Headers = $headers
             InFile = $env:BLACKDUCK_FILE_PATH
             ContentType = 'application/octet-stream'
+            ErrorAction = 'Stop'
           }
 
           $response = Invoke-RestMethod @request
 
-          if ($null -ne $response) {
-            $response | ConvertTo-Json -Depth 20
+          if ($response.meta.code -ne 200 -or [string]$response.results.product_id -notmatch '^[1-9][0-9]*$') {
+            throw 'Upload did not return a successful response with a product ID'
           }
+
+          if ($headers.ContainsKey('Replace') -and [string]$response.results.product_id -ne $headers['Replace']) {
+            throw 'Upload returned a different product ID than the replacement target'
+          }
+
+          $response | ConvertTo-Json -Depth 20
